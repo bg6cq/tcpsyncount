@@ -62,25 +62,33 @@ typedef struct _EtherHeader EtherPacket;
 
 int debug = 0;
 int daemon_proc = 0;
-int timeout = 0;
+int timeout = 3;
 int print_all = 0;
 char dev_name[MAXLEN];
 char filter_string[MAXLEN];
+char prefix[MAXLEN];
+
+int checkports = 0;
+int Ports[65536];
 
 struct {
 	int port;
 	unsigned int in;
 	unsigned int out;
-} portcount [MAXPORT+1];
+} portcount[MAXPORT + 1];
 
 void TimeOut(int signum)
 {
 	if (debug)
 		printf("Timer ran out! exit -1\n");
 	int p;
-	for(p=0;p< MAXPORT+1; p++) {
-		if(portcount[p].in + portcount[p].out !=0) 
-			printf("%d %d %d\n", p, portcount[p].in ,portcount[p].out);
+	for (p = 0; p < MAXPORT + 1; p++) {
+		if (portcount[p].in + portcount[p].out != 0) {
+			if (prefix[0]) {
+				printf("%s,port=%d in=%d,out=%d\n", prefix, p, portcount[p].in, portcount[p].out);
+			} else
+				printf("%d %d %d\n", p, portcount[p].in, portcount[p].out);
+		}
 	}
 	exit(0);
 }
@@ -176,19 +184,25 @@ void printPacket(EtherPacket * packet, ssize_t packetSize, char *message)
 }
 
 int IPIsUSTCnetIP(__u32 ip)
-{    
+{
 	__u32 hip;
-	hip=ntohl(ip);
-	if( (hip & 0xFFFFE000l) == 0xCA264000l) return 1;
-	if( (hip & 0xFFFFF000l) == 0xD22D4000l) return 1;
-	if( (hip & 0xFFFFF000l) == 0xD22D7000l) return 1;
-	if( (hip & 0xFFFFF000l) == 0xD3569000l) return 1;
-	if( (hip & 0xFFFFE000l) == 0xDEC34000l) return 1;
-	if( (hip & 0xFFFFE000l) == 0x72D6A000l) return 1;
-	if( (hip & 0xFFFFC000l) == 0x72D6C000l) return 1;
-     return 0;
+	hip = ntohl(ip);
+	if ((hip & 0xFFFFE000l) == 0xCA264000l)
+		return 1;
+	if ((hip & 0xFFFFF000l) == 0xD22D4000l)
+		return 1;
+	if ((hip & 0xFFFFF000l) == 0xD22D7000l)
+		return 1;
+	if ((hip & 0xFFFFF000l) == 0xD3569000l)
+		return 1;
+	if ((hip & 0xFFFFE000l) == 0xDEC34000l)
+		return 1;
+	if ((hip & 0xFFFFE000l) == 0x72D6A000l)
+		return 1;
+	if ((hip & 0xFFFFC000l) == 0x72D6C000l)
+		return 1;
+	return 0;
 }
-
 
 void process_packet(const unsigned char *buf, int len)
 {
@@ -209,7 +223,6 @@ void process_packet(const unsigned char *buf, int len)
 		packet += 4;
 		len -= 4;
 	}
-
 
 	if ((packet[0] == 0x81) && (packet[1] == 0x00)) {	// skip 802.1Q tag 0x8100
 		packet += 4;
@@ -238,18 +251,23 @@ void process_packet(const unsigned char *buf, int len)
 		unsigned sport = ntohs(tcph->source);
 		unsigned dport = ntohs(tcph->dest);
 
-		int srcisustc= IPIsUSTCnetIP(ip->saddr);
+		int srcisustc = IPIsUSTCnetIP(ip->saddr);
 
 		if (debug) {
-			Debug("ipv4 tcp syn %s %d.%d.%d.%d:%d -> %d.%d.%d.%d:%d", 
-				srcisustc?"from USTC": "to  USTC", 
-				packet[12], packet[13], packet[14], packet[15],sport,
-				packet[16], packet[17], packet[18], packet[19],dport);
+			Debug("ipv4 tcp syn %s %d.%d.%d.%d:%d -> %d.%d.%d.%d:%d",
+			      srcisustc ? "from USTC" : "to  USTC",
+			      packet[12], packet[13], packet[14], packet[15], sport, packet[16], packet[17], packet[18], packet[19], dport);
 		}
-		if(srcisustc)
-			portcount[dport].out ++;
+		if (checkports && (Ports[dport] == 0)) {
+			if (debug)
+				Debug("ignoreed\n");
+			return;
+		}
+
+		if (srcisustc)
+			portcount[dport].out++;
 		else
-			portcount[dport].in ++;
+			portcount[dport].in++;
 
 	}
 }
@@ -293,18 +311,36 @@ void process_pcap_packet(void)
 void usage(void)
 {
 	printf("Usage:\n");
-	printf("./tcpsyncount [ -d ] [ -x timeout ] -i ifname \n");
+	printf("./tcpsyncount [ -d ] [ -x timeout ] [ -p 80,22,23 ] -i ifname \n");
 	printf(" options:\n");
 	printf("    -d               enable debug\n");
+	printf("    -x timeout       exit -1 when timeout, default is 3\n");
+	printf("    -p ports         count ports\n");
 	printf("    -i ifname        interface to monitor\n");
-	printf("    -x timeout       exit -1 when timeout\n");
+	printf("    -P prefix        influxdb prefix\n");
 	exit(0);
+}
+
+void get_ports(char *s)
+{
+	char *p = s;
+	while (*p) {
+		while (*p && (!isdigit(*p)))
+			p++;	// skip blank
+		if (*p == 0)
+			break;
+		int port = atoi(p);
+		if ((port >= 0) && (port <= 65535))
+			Ports[port] = 1;
+		while (*p && isdigit(*p))
+			p++;	// skip port
+	}
 }
 
 int main(int argc, char *argv[])
 {
 	int c;
-	while ((c = getopt(argc, argv, "dx:i:")) != EOF)
+	while ((c = getopt(argc, argv, "dx:i:p:P:")) != EOF)
 		switch (c) {
 		case 'd':
 			debug = 1;
@@ -315,17 +351,25 @@ int main(int argc, char *argv[])
 		case 'x':
 			timeout = atoi(optarg);
 			break;
+		case 'p':
+			checkports = 1;
+			get_ports(optarg);
+			break;
+		case 'P':
+			strcpy(prefix, optarg);
+			break;
 		}
-	sprintf(filter_string, "tcp and ((tcp[tcpflags] & (tcp-syn) != 0) && (tcp[tcpflags] & (tcp-ack) == 0))");
+	sprintf(filter_string, "tcp and ((tcp[tcpflags]&(tcp-syn)!=0)&&(tcp[tcpflags]&(tcp-ack)==0))");
 	if (dev_name[0] == 0)
 		usage();
 	int p;
-	for(p=0;p< MAXPORT+1; p++)
+	for (p = 0; p < MAXPORT + 1; p++)
 		portcount[p].port = p;
 	if (debug) {
 		printf("         debug = 1\n");
 		printf("       pcap if = %s\n", dev_name);
 		printf("       timeout = %d\n", timeout);
+		printf("    checkports = %d\n", checkports);
 		printf("\n");
 	}
 
