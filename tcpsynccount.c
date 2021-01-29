@@ -47,6 +47,7 @@ port IN OUT
 #define MAXLEN 			2048
 #define MAX_PACKET_SIZE		65535
 #define MAXPORT 65535
+#define MAXSUBNET		50
 
 struct _EtherHeader {
 	uint16_t destMAC1;
@@ -70,12 +71,18 @@ char prefix[MAXLEN];
 
 int checkports = 0;
 int Ports[65536];
+int total_subnets = 0;
 
 struct {
 	int port;
 	unsigned int in;
 	unsigned int out;
 } portcount[MAXPORT + 1];
+
+struct {
+	__u32 ip;
+	__u32 mask;
+} local_subnets[MAXSUBNET];
 
 void TimeOut(int signum)
 {
@@ -109,8 +116,8 @@ void err_doit(int errnoflag, int level, const char *fmt, va_list ap)
 		syslog(level, "%s", buf);
 	} else {
 		fflush(stdout);	/* in case stdout and stderr are the same */
-		fputs(buf, stderr);
-		fflush(stderr);
+		fputs(buf, stdout);
+		fflush(stdout);
 	}
 	return;
 }
@@ -183,24 +190,57 @@ void printPacket(EtherPacket * packet, ssize_t packetSize, char *message)
 	fflush(stdout);
 }
 
-int IPIsUSTCnetIP(__u32 ip)
+void load_localsubnets(char *name)
 {
-	__u32 hip;
-	hip = ntohl(ip);
-	if ((hip & 0xFFFFE000l) == 0xCA264000l)
-		return 1;
-	if ((hip & 0xFFFFF000l) == 0xD22D4000l)
-		return 1;
-	if ((hip & 0xFFFFF000l) == 0xD22D7000l)
-		return 1;
-	if ((hip & 0xFFFFF000l) == 0xD3569000l)
-		return 1;
-	if ((hip & 0xFFFFE000l) == 0xDEC34000l)
-		return 1;
-	if ((hip & 0xFFFFE000l) == 0x72D6A000l)
-		return 1;
-	if ((hip & 0xFFFFC000l) == 0x72D6C000l)
-		return 1;
+	FILE *fp;
+	char buf[1024];
+	char *p;
+	fp = fopen(name, "r");
+	if (fp == NULL) {
+		printf("open local subnets file %s error\n", name);
+		exit(0);
+	}
+	while (fgets(buf, 1024, fp)) {
+		if (total_subnets == MAXSUBNET - 1) {
+			printf("too many local subnets\n");
+			exit(0);
+		}
+		p = buf;
+		while (*p && isblank(*p))
+			p++;
+		if (*p == 0)
+			continue;
+		if (*p == '#')
+			continue;
+		if (inet_aton(p, (struct in_addr *)&local_subnets[total_subnets].ip) == 0)
+			continue;
+
+		while (*p && !isblank(*p))
+			p++;
+		if (*p == 0)
+			continue;
+		while (*p && isblank(*p))
+			p++;
+		if (inet_aton(p, (struct in_addr *)&local_subnets[total_subnets].mask) == 0)
+			continue;
+		local_subnets[total_subnets].ip = (local_subnets[total_subnets].ip & local_subnets[total_subnets].mask);
+		__u32 ip, mask;
+		ip = local_subnets[total_subnets].ip;
+		mask = local_subnets[total_subnets].mask;
+		if (debug)
+			printf("Local subnet: %d %d.%d.%d.%d/%d.%d.%d.%d\n", total_subnets, (ip & 0xff), (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff,
+			       mask & 0xff, (mask >> 8) & 0xff, (mask >> 16) & 0xff, (mask >> 24) & 0xff);
+		total_subnets++;
+	}
+	fclose(fp);
+}
+
+int IPislocal_subnets(__u32 ip)
+{
+	int i;
+	for (i = 0; i < total_subnets; i++)
+		if (local_subnets[i].ip == ((local_subnets[i].mask & ip)))
+			return 1;
 	return 0;
 }
 
@@ -208,14 +248,14 @@ void process_packet(const unsigned char *buf, int len)
 {
 	unsigned char *packet;
 
-	if (debug)
-		printf("pkt, len=%d\n", len);
+	// if (debug)
+	//      printf("pkt, len=%d\n", len);
 	if (len < 54)
 		return;
 	packet = (unsigned char *)(buf + 12);	// skip ethernet dst & src addr
 	len -= 12;
-	if (debug)
-		printf("proto: 0x%02X%02X\n", packet[0], packet[1]);
+	// if (debug)
+	//      printf("proto: 0x%02X%02X\n", packet[0], packet[1]);
 
 	if ((packet[0] == 0x81) && (packet[1] == 0x00)) {	// skip 802.1Q tag 0x8100
 		if (debug)
@@ -251,11 +291,11 @@ void process_packet(const unsigned char *buf, int len)
 		unsigned sport = ntohs(tcph->source);
 		unsigned dport = ntohs(tcph->dest);
 
-		int srcisustc = IPIsUSTCnetIP(ip->saddr);
+		int srcislocal = IPislocal_subnets(ip->saddr);
 
 		if (debug) {
 			Debug("ipv4 tcp syn %s %d.%d.%d.%d:%d -> %d.%d.%d.%d:%d",
-			      srcisustc ? "from USTC" : "to  USTC",
+			      srcislocal ? "from Local" : "to   Local",
 			      packet[12], packet[13], packet[14], packet[15], sport, packet[16], packet[17], packet[18], packet[19], dport);
 		}
 		if (checkports && (Ports[dport] == 0)) {
@@ -264,7 +304,7 @@ void process_packet(const unsigned char *buf, int len)
 			return;
 		}
 
-		if (srcisustc)
+		if (srcislocal)
 			portcount[dport].out++;
 		else
 			portcount[dport].in++;
@@ -311,13 +351,14 @@ void process_pcap_packet(void)
 void usage(void)
 {
 	printf("Usage:\n");
-	printf("./tcpsyncount [ -d ] [ -x timeout ] [ -p 80,22,23 ] -i ifname \n");
+	printf("./tcpsyncount [ -d ] [ -x timeout ] [ -p 80,22,23 ] [ -l filename ] -i ifname \n");
 	printf(" options:\n");
 	printf("    -d               enable debug\n");
 	printf("    -x timeout       exit -1 when timeout, default is 3\n");
 	printf("    -p ports         count ports\n");
 	printf("    -i ifname        interface to monitor\n");
 	printf("    -P prefix        influxdb prefix\n");
+	printf("    -l filename      local subnets file, default is localsubnets.txt\n");
 	exit(0);
 }
 
@@ -340,7 +381,7 @@ void get_ports(char *s)
 int main(int argc, char *argv[])
 {
 	int c;
-	while ((c = getopt(argc, argv, "dx:i:p:P:")) != EOF)
+	while ((c = getopt(argc, argv, "dx:i:p:P:l:")) != EOF)
 		switch (c) {
 		case 'd':
 			debug = 1;
@@ -358,7 +399,13 @@ int main(int argc, char *argv[])
 		case 'P':
 			strcpy(prefix, optarg);
 			break;
+		case 'l':
+			load_localsubnets(optarg);
+			break;
 		}
+
+	if (total_subnets == 0)
+		load_localsubnets("localsubnets.txt");
 	sprintf(filter_string, "tcp and ((tcp[tcpflags]&(tcp-syn)!=0)&&(tcp[tcpflags]&(tcp-ack)==0))");
 	if (dev_name[0] == 0)
 		usage();
