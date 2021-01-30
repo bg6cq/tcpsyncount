@@ -1,6 +1,6 @@
 # tcpsyncount count tcp syn packets
 
-抓包统计TCP SYN包的数量，默认运行3秒钟，显示每个端口的IN、OUT SYNC 包数量。
+抓包统计TCP SYN包的数量，默认运行3秒钟，显示每个端口的输入、输出2个方向 SYN 包数量。
 
 localsubnets.txt 是本地网段。
 
