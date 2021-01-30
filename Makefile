@@ -1,6 +1,6 @@
-tcpsynccount:tcpsynccount.c
-	gcc -g -Wall -o tcpsynccount tcpsynccount.c -D_GNU_SOURCE -lpcap
-indent: tcpsynccount.c
-	indent tcpsynccount.c  -nbad -bap -nbc -bbo -hnl -br -brs -c33 -cd33 -ncdb -ce -ci4  \
+tcpsyncount:tcpsyncount.c
+	gcc -g -Wall -o tcpsyncount tcpsyncount.c -D_GNU_SOURCE -lpcap
+indent: tcpsyncount.c
+	indent tcpsyncount.c  -nbad -bap -nbc -bbo -hnl -br -brs -c33 -cd33 -ncdb -ce -ci4  \
 -cli0 -d0 -di1 -nfc1 -i8 -ip0 -l160 -lp -npcs -nprs -npsl -sai \
 -saf -saw -ncs -nsc -sob -nfca -cp33 -ss -ts8 -il1
