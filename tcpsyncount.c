@@ -68,6 +68,7 @@ int print_all = 0;
 char dev_name[MAXLEN];
 char filter_string[MAXLEN];
 char prefix[MAXLEN];
+int TDengine = 0;
 
 int checkports = 0;
 int Ports[65536];
@@ -91,7 +92,10 @@ void TimeOut(int signum)
 	int p;
 	for (p = 0; p < MAXPORT + 1; p++) {
 		if (portcount[p].in + portcount[p].out != 0) {
-			if (prefix[0]) {
+			if (TDengine) {
+				printf("INSERT INTO tcpsyncount.tcpsyncount_p%d USING tcpsyncount.tcpsyncount TAGS (%d) VALUES(now, %d, %d);\n",
+				       p, p, portcount[p].in, portcount[p].out);
+			} else if (prefix[0]) {
 				printf("%s,port=%d in=%d,out=%d\n", prefix, p, portcount[p].in, portcount[p].out);
 			} else
 				printf("%d %d %d\n", p, portcount[p].in, portcount[p].out);
@@ -351,9 +355,10 @@ void process_pcap_packet(void)
 void usage(void)
 {
 	printf("Usage:\n");
-	printf("./tcpsyncount [ -d ] [ -x timeout ] [ -p 80,22,23 ] [ -l filename ] -i ifname \n");
+	printf("./tcpsyncount [ -d ] [ -t ] [ -x timeout ] [ -p 80,22,23 ] [ -l filename ] -i ifname \n");
 	printf(" options:\n");
 	printf("    -d               enable debug\n");
+	printf("    -t               TDengine output\n");
 	printf("    -x timeout       exit -1 when timeout, default is 3\n");
 	printf("    -p ports         count ports\n");
 	printf("    -i ifname        interface to monitor\n");
@@ -381,10 +386,13 @@ void get_ports(char *s)
 int main(int argc, char *argv[])
 {
 	int c;
-	while ((c = getopt(argc, argv, "dx:i:p:P:l:")) != EOF)
+	while ((c = getopt(argc, argv, "dtx:i:p:P:l:")) != EOF)
 		switch (c) {
 		case 'd':
 			debug = 1;
+			break;
+		case 't':
+			TDengine = 1;
 			break;
 		case 'i':
 			strncpy(dev_name, optarg, MAXLEN);
