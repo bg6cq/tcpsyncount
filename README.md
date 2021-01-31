@@ -26,7 +26,7 @@ done
 ```
 CREATE DATABASE tcpsyncount;
 use tcpsyncount;
-CREATE TABLE tcpsyncount(ts TIMESTAMP, in_countINT, outcount INT) TAGS(port INT);
+CREATE STABLE tcpsyncount(ts TIMESTAMP, incount INT, outcount INT) TAGS(port INT);
 ```
 grafana中选择数据的SQL查询语句是
 ```
